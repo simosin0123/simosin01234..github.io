@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>予算管理システム（Firebase同期・カスタム対応）</title>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+    <style>
+        body { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background: #F9FAFB; margin: 0; color: #222; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        header { background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); color: white; padding: 30px 0; text-align: center; }
+        h1 { font-size: 2.2em; font-weight: 700;}
+        h2 { margin-top:1em;}
+        .content, .auth-content { background: white; border-radius: 12px; box-shadow: 0 1px 5px rgba(0,0,0,0.08); padding: 30px;}
+        .flex { display: flex; gap: 20px; flex-wrap: wrap;}
+        .card { background: #F4F4FC; border-radius: 8px; padding: 18px; margin-bottom: 12px; border: 1px solid #E5E7EB;}
+        .input-group { margin-bottom: 10px;}
+        label { display: block; font-weight: 600; margin-bottom: 3px;}
+        input[type=text],input[type=number],input[type=password],select {
+            width: 100%; padding: 8px 12px; font-size: 1em;
+            border-radius: 6px; border: 1.5px solid #D1D5DB; background: #fff; color: #222;
+        }
+        input:focus, select:focus { border-color: #7C3AED;}
+        button {
+            background: #4F46E5; color: white; border: none; padding: 8px 16px; border-radius: 6px;
+            font-size: 1em; font-weight: 600; cursor: pointer; transition: background 0.2s;
+        }
+        button:hover { background: #4338CA;}
+        .danger { background: #E11D48!important;}
+        .success { background: #059669!important;}
+        .secondary { background: #64748b!important;}
+        .small { font-size:0.9em;}
+        .tab-bar {display: flex; border-radius:12px; overflow:hidden; margin-bottom:12px;}
+        .tab-btn {
+            flex:1; background:#E0E7FF; color:#444; padding:14px; cursor:pointer; text-align:center; border:none; font-weight:500;
+        }
+        .tab-btn.active {background:#4F46E5; color:white;}
+        .expense-list { max-height: 320px; overflow-y: auto;}
+        .expense-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #E5E7EB;}
+        .expense-item:last-child { border-bottom: none;}
+        .expense-item strong { color: #7C3AED;}
+        .delete-btn { background: #F43F5E; color: white; padding:4px 10px; font-size:0.95em; margin-left:8px;}
+        .delete-btn:hover { background: #DC2626;}
+        .edit-btn { background:#7C3AED; margin-left:5px;}
+        .category-manage {display:flex;gap:5px;}
+        .table {width:100%; border-collapse:collapse;}
+        .table th,.table td {padding:8px; border-bottom:1px solid #E5E7EB; text-align:left;}
+        .table th {background:#4F46E5; color:#fff;}
+        .progress-bar { width:100%; height:10px; background:#E5E7EB; border-radius:6px; overflow:hidden;}
+        .progress-fill {height:100%; background:linear-gradient(to right,#7C3AED,#4F46E5);}
+        .alert { padding:12px; border-radius:6px; margin-bottom:8px; font-weight:500;}
+        .alert-warning { background: #FEF3C7; color: #92400E;}
+        .alert-success { background: #D1FAE5; color: #065F46;}
+        .week-total-row { background:#c7d2fe!important; color:#1e293b; font-weight:bold;}
+        @media (max-width:700px){
+            .flex {flex-direction:column;}
+            .content, .auth-content { padding: 12px;}
+        }
+    </style>
+</head>
+<body>
+<header>
+    <h1>💰 予算管理システム</h1>
+    <p>クラウド同期＆フルカスタム</p>
+</header>
+<!-- 認証画面 -->
+<div id="loginScreen" class="auth-content" style="max-width:400px;margin:2em auto; display:none;">
+    <h2>ログイン</h2>
+    <div class="input-group"><label>メールアドレス</label><input type="text" id="loginUsername"></div>
+    <div class="input-group"><label>パスワード</label><input type="password" id="loginPassword"></div>
+    <button onclick="login()">ログイン</button>
+    <button class="secondary" onclick="showRegister()">新規登録</button>
+</div>
+<div id="registerScreen" class="auth-content" style="max-width:400px;margin:2em auto; display:none;">
+    <h2>新規登録</h2>
+    <div class="input-group"><label>メールアドレス</label><input type="text" id="registerUsername"></div>
+    <div class="input-group"><label>パスワード</label><input type="password" id="registerPassword"></div>
+    <div class="input-group"><label>パスワード（確認）</label><input type="password" id="registerPasswordConfirm"></div>
+    <button onclick="register()">登録</button>
+    <button class="secondary" onclick="showLogin()">戻る</button>
+</div>
+<!-- メインアプリ -->
+<div id="mainApp" style="display:none;">
+    <div class="container">
+        <div style="text-align:right;">
+            <span class="small">ログイン中: <b id="currentUser"></b></span>
+            <button class="secondary" onclick="logout()">ログアウト</button>
+        </div>
+        <!-- 月の切り替え・月初設定 -->
+        <div style="margin:18px 0;text-align:center;">
+            <button onclick="changeMonth(-1)">← 前月</button>
+            <span id="currentMonth" style="font-weight:bold;font-size:1.1em;"></span>
+            <button onclick="changeMonth(1)">次月 →</button>
+            <button class="success" onclick="goToToday()">今月へ</button>
+            <button class="secondary" onclick="changeMonthStartDay()">月の開始日を設定</button>
+        </div>
+        <!-- タブ -->
+        <div class="tab-bar">
+            <button class="tab-btn active" onclick="showTab('summary')">概要</button>
+            <button class="tab-btn" onclick="showTab('income')">収入</button>
+            <button class="tab-btn" onclick="showTab('budget')">予算</button>
+            <button class="tab-btn" onclick="showTab('expense')">支出</button>
+            <button class="tab-btn" onclick="showTab('weekly')">週次レポート</button>
+            <button class="tab-btn" onclick="showTab('settings')">設定</button>
+        </div>
+        <!-- 概要 -->
+        <div class="content" id="summaryTab">
+            <h2>月次サマリー</h2>
+            <div class="flex">
+                <div class="card" style="flex:1;"><h3>収入</h3><p style="font-size:1.3em">¥<span id="totalIncome">0</span></p></div>
+                <div class="card" style="flex:1;"><h3>予算合計</h3><p style="font-size:1.3em">¥<span id="totalBudget">0</span></p></div>
+                <div class="card" style="flex:1;"><h3>支出合計</h3><p style="font-size:1.3em">¥<span id="totalExpense">0</span></p></div>
+                <div class="card" style="flex:1;" id="remainingCard"><h3>残額</h3><p style="font-size:1.3em">¥<span id="remainingBudget">0</span></p></div>
+            </div>
+            <h3>カテゴリー別支出状況</h3>
+            <table class="table"><thead>
+                <tr><th>カテゴリー</th><th>予算</th><th>支出</th><th>残額</th><th>進捗</th></tr>
+            </thead><tbody id="categorySummary"></tbody></table>
+            <div id="alerts"></div>
+        </div>
+        <!-- 収入 -->
+        <div class="content" id="incomeTab" style="display:none;">
+            <h2>収入設定</h2>
+            <div id="incomeList"></div>
+            <button onclick="addIncomeCategory()">＋収入項目追加</button>
+        </div>
+        <!-- 予算 -->
+        <div class="content" id="budgetTab" style="display:none;">
+            <h2>予算設定</h2>
+            <div>
+                <h3>固定費 <button class="small" onclick="addBudgetCategory('fixed')">＋追加</button></h3>
+                <div id="budgetFixed"></div>
+                <h3>貯蓄・積立 <button class="small" onclick="addBudgetCategory('saving')">＋追加</button></h3>
+                <div id="budgetSaving"></div>
+                <h3>変動費 <button class="small" onclick="addBudgetCategory('variable')">＋追加</button></h3>
+                <div id="budgetVariable"></div>
+            </div>
+        </div>
+        <!-- 支出 -->
+        <div class="content" id="expenseTab" style="display:none;">
+            <h2>支出入力</h2>
+            <div class="flex">
+                <div class="card" style="flex:2;">
+                    <div class="input-group"><label>日付</label>
+                        <input type="date" id="expenseDate">
+                    </div>
+                    <div class="input-group"><label>カテゴリー</label>
+                        <select id="expenseCategory"></select>
+                    </div>
+                    <div class="input-group"><label>金額</label>
+                        <input type="number" id="expenseAmount" placeholder="0">
+                    </div>
+                    <div class="input-group"><label>メモ（任意）</label>
+                        <input type="text" id="expenseMemo">
+                    </div>
+                    <button onclick="addExpense()">支出を追加</button>
+                </div>
+            </div>
+            <h3>今月の支出一覧</h3>
+            <div class="expense-list" id="expenseList"></div>
+        </div>
+        <!-- 週次レポート -->
+        <div class="content" id="weeklyTab" style="display:none;">
+            <h2>週次レポート</h2>
+            <table class="table"><thead>
+                <tr>
+                    <th>カテゴリー</th>
+                    <th>第1週</th>
+                    <th>第2週</th>
+                    <th>第3週</th>
+                    <th>第4週</th>
+                    <th>第5週</th>
+                    <th>月合計</th>
+                </tr>
+            </thead>
+            <tbody id="weeklyReport"></tbody>
+            </table>
+        </div>
+        <!-- 設定 -->
+        <div class="content" id="settingsTab" style="display:none;">
+            <h2>カテゴリ・月初設定</h2>
+            <div>
+                <b>月の開始日：</b>
+                <span id="currentStartDay"></span>
+                <button onclick="changeMonthStartDay()">変更</button>
+            </div>
+            <p>各カテゴリ・収入名の編集・追加・削除は各画面から行えます。</p>
+            <button class="danger" onclick="resetAllData()">全データ削除</button>
+        </div>
+    </div>
+</div>
+<!-- ===== SCRIPT本体（超長文のため次のメッセージで全コード送信） ===== -->
+<script>
+// ==== Firebase設定（ここを書き換えて使う） ====
+const firebaseConfig = {
+  apiKey: "AIzaSyDFnNNb5wTESyC6zdWgG3OoR1LVLr7Vc1o",
+  authDomain: "josan-44288.firebaseapp.com",
+  projectId: "josan-44288",
+  storageBucket: "josan-44288.appspot.com",
+  messagingSenderId: "844486822796",
+  appId: "1:844486822796:web:320679767e0ad86355a4a9",
+  measurementId: "G-KTJRYVCV87"
+};
+// ---- ここを自分のFirebaseプロジェクト情報に！ ----
+
+// Firebase初期化
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+// ========== 変数/定数 ==========
+let data = {}; // 月次データ
+let currentMonth = ""; // '2024-06'など
+let currentUser = null;
+let userUid = null;
+const LOCAL_MONTH_KEY = "lastMonthKey";
+const LOCAL_STARTDAY_KEY = "budgetAppStartDay";
+
+// ========== ユーティリティ ==========
+function getMonthStartDay() {
+    return parseInt(localStorage.getItem(LOCAL_STARTDAY_KEY) || "15");
+}
+function setMonthStartDay(d) {
+    localStorage.setItem(LOCAL_STARTDAY_KEY, d);
+    document.getElementById('currentStartDay').textContent = d + '日';
+}
+function getMonthKey(date) {
+    const d = new Date(date);
+    let startDay = getMonthStartDay();
+    if (d.getDate() < startDay) d.setMonth(d.getMonth() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function getMonthRange(monthKey) {
+    let [y, m] = monthKey.split("-").map(Number);
+    let startDay = getMonthStartDay();
+    const start = new Date(y, m - 1, startDay);
+    const end = new Date(y, m, startDay - 1);
+    return { start, end };
+}
+function getWeekNumber(date, monthKey) {
+    const range = getMonthRange(monthKey);
+    const daysSinceStart = Math.floor((date - range.start) / (1000 * 60 * 60 * 24));
+    return Math.min(Math.floor(daysSinceStart / 7) + 1, 5);
+}
+
+// ========== Firebase同期ロジック ==========
+async function syncToFirestore() {
+    if (!userUid) return;
+    try {
+        await db.collection("budgets").doc(userUid).set(data, { merge: true });
+    } catch (e) {
+        saveLocalBackup();
+    }
+}
+async function syncFromFirestore() {
+    if (!userUid) return;
+    try {
+        const snap = await db.collection("budgets").doc(userUid).get();
+        if (snap.exists) data = snap.data() || {};
+        else data = {};
+        updateDisplay();
+    } catch (e) {
+        loadLocalBackup();
+        updateDisplay();
+    }
+}
+function saveLocalBackup() {
+    localStorage.setItem("backup_"+userUid, JSON.stringify(data));
+}
+function loadLocalBackup() {
+    let s = localStorage.getItem("backup_"+userUid);
+    if (s) data = JSON.parse(s);
+}
+async function flushOfflineQueue() {}
+
+// ========== 認証 ==========
+async function register() {
+    const email = document.getElementById("registerUsername").value.trim();
+    const pw = document.getElementById("registerPassword").value;
+    const pw2 = document.getElementById("registerPasswordConfirm").value;
+    if (!email || !pw || !pw2) return alert("すべての項目を入力してください");
+    if (pw !== pw2) return alert("パスワードが一致しません");
+    try {
+        await auth.createUserWithEmailAndPassword(email, pw);
+        alert("登録が完了しました。ログインしてください");
+        showLogin();
+    } catch (e) { alert("登録エラー: "+e.message); }
+}
+async function login() {
+    const email = document.getElementById("loginUsername").value.trim();
+    const pw = document.getElementById("loginPassword").value;
+    if (!email || !pw) return alert("入力してください");
+    try {
+        const userCred = await auth.signInWithEmailAndPassword(email, pw);
+        // 以降 onAuthStateChanged で自動遷移
+    } catch (e) { alert("ログインエラー: "+e.message); }
+}
+async function logout() {
+    if (!confirm("ログアウトしますか？")) return;
+    await syncToFirestore();
+    await auth.signOut();
+}
+auth.onAuthStateChanged(async user => {
+    if (user) {
+        currentUser = user;
+        userUid = user.uid;
+        document.getElementById("currentUser").textContent = user.email;
+        await syncFromFirestore();
+        currentMonth = localStorage.getItem(LOCAL_MONTH_KEY) || getMonthKey(new Date());
+        updateDisplay();
+        showMainApp();
+        await flushOfflineQueue();
+    } else {
+        currentUser = userUid = null;
+        showLogin();
+    }
+});
+
+// ========== 画面遷移 ==========
+function showLogin() {
+    document.getElementById('loginScreen').style.display = 'block';
+    document.getElementById('registerScreen').style.display = 'none';
+    document.getElementById('mainApp').style.display = 'none';
+}
+function showRegister() {
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('registerScreen').style.display = 'block';
+    document.getElementById('mainApp').style.display = 'none';
+}
+function showMainApp() {
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('registerScreen').style.display = 'none';
+    document.getElementById('mainApp').style.display = 'block';
+    showTab('summary');
+}
+
+// ========== タブ切替 ==========
+function showTab(tab) {
+    ['summary', 'income', 'budget', 'expense', 'weekly', 'settings'].forEach(t => {
+        document.getElementById(t + 'Tab').style.display = (t === tab) ? 'block' : 'none';
+        const btns = document.getElementsByClassName('tab-btn');
+        for (let btn of btns) {
+            if (btn.textContent.includes(
+                tab === 'summary' ? '概要' :
+                    tab === 'income' ? '収入' :
+                        tab === 'budget' ? '予算' :
+                            tab === 'expense' ? '支出' :
+                                tab === 'weekly' ? '週次' :
+                                    tab === 'settings' ? '設定' : '')) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        }
+    });
+    if (tab === 'income') renderIncomeList();
+    if (tab === 'budget') renderBudgetList();
+    if (tab === 'expense') { renderExpenseCategoryOptions(); updateExpenseList(); }
+    if (tab === 'weekly') updateWeeklyReport();
+    if (tab === 'settings') document.getElementById('currentStartDay').textContent = getMonthStartDay();
+    updateDisplay();
+}
+
+// ========== データ初期化 ==========
+function getDefaultConfig() {
+    return {
+        income: [
+            { name: '仕送り', amount: 50000 },
+            { name: 'アルバイト', amount: 100000 }
+        ],
+        budget: {
+            fixed: [
+                { name: '通信費', amount: 8500 },
+                { name: '水道光熱費', amount: 13000 },
+                { name: 'サブスク', amount: 13000 }
+            ],
+            saving: [
+                { name: '積立NISA', amount: 20000 },
+                { name: '海外旅行', amount: 17000 },
+                { name: 'カメラ', amount: 4000 }
+            ],
+            variable: [
+                { name: '食費', amount: 27000 },
+                { name: '交通費', amount: 11000 },
+                { name: '趣味費', amount: 11000 },
+                { name: '交際費', amount: 11000 },
+                { name: '日用品費', amount: 6000 },
+                { name: '予備費', amount: 10000 }
+            ]
+        },
+        expenses: []
+    };
+}
+function initializeMonth(monthKey) {
+    if (!data[monthKey]) {
+        data[monthKey] = JSON.parse(JSON.stringify(getDefaultConfig()));
+        syncToFirestore();
+    }
+}
+
+// ========== 収入の追加・編集・削除 ==========
+function renderIncomeList() {
+    initializeMonth(currentMonth);
+    const list = data[currentMonth].income;
+    let html = '';
+    list.forEach((item, idx) => {
+        html += `
+        <div class="input-group">
+            <input type="text" value="${item.name}" onchange="editIncomeName(${idx},this.value)" style="width:40%;">
+            <input type="number" value="${item.amount}" onchange="editIncomeAmount(${idx},this.value)" style="width:35%;margin-left:4px;">
+            <button class="delete-btn" onclick="deleteIncomeCategory(${idx})">削除</button>
+        </div>`;
+    });
+    document.getElementById('incomeList').innerHTML = html;
+    syncToFirestore();
+}
+function editIncomeName(idx, val) {
+    data[currentMonth].income[idx].name = val;
+    syncToFirestore(); renderIncomeList();
+}
+function editIncomeAmount(idx, val) {
+    data[currentMonth].income[idx].amount = parseFloat(val) || 0;
+    syncToFirestore(); renderIncomeList();
+}
+function addIncomeCategory() {
+    data[currentMonth].income.push({ name: '新規項目', amount: 0 });
+    syncToFirestore(); renderIncomeList();
+}
+function deleteIncomeCategory(idx) {
+    if (confirm('削除しますか？')) {
+        data[currentMonth].income.splice(idx, 1);
+        syncToFirestore(); renderIncomeList();
+    }
+}
+
+// ========== 予算カテゴリ編集 ==========
+function renderBudgetList() {
+    initializeMonth(currentMonth);
+    ['fixed', 'saving', 'variable'].forEach(group => {
+        let html = '';
+        data[currentMonth].budget[group].forEach((cat, idx) => {
+            html += `<div class="category-manage">
+            <input type="text" value="${cat.name}" onchange="editBudgetCategoryName('${group}',${idx},this.value)" style="width:45%;">
+            <input type="number" value="${cat.amount}" onchange="editBudgetCategoryAmount('${group}',${idx},this.value)" style="width:35%;">
+            <button class="delete-btn" onclick="deleteBudgetCategory('${group}',${idx})">削除</button>
+            </div>`;
+        });
+        document.getElementById('budget' + (group[0].toUpperCase() + group.slice(1))).innerHTML = html;
+    });
+    syncToFirestore();
+}
+function editBudgetCategoryName(group, idx, val) {
+    data[currentMonth].budget[group][idx].name = val;
+    syncToFirestore(); renderBudgetList();
+}
+function editBudgetCategoryAmount(group, idx, val) {
+    data[currentMonth].budget[group][idx].amount = parseFloat(val) || 0;
+    syncToFirestore(); renderBudgetList();
+}
+function addBudgetCategory(group) {
+    data[currentMonth].budget[group].push({ name: '新規', amount: 0 });
+    syncToFirestore(); renderBudgetList();
+}
+function deleteBudgetCategory(group, idx) {
+    if (confirm('削除しますか？')) {
+        data[currentMonth].budget[group].splice(idx, 1);
+        syncToFirestore(); renderBudgetList();
+    }
+}
+
+// ========== 支出入力 ==========
+function renderExpenseCategoryOptions() {
+    initializeMonth(currentMonth);
+    let opts = [];
+    ['fixed', 'saving', 'variable'].forEach(g => {
+        opts = opts.concat(data[currentMonth].budget[g].map(cat => cat.name));
+    });
+    let html = opts.map(cat => `<option value="${cat}">${cat}</option>`).join('');
+    document.getElementById('expenseCategory').innerHTML = html;
+}
+function addExpense() {
+    let d = document.getElementById('expenseDate').value;
+    let cat = document.getElementById('expenseCategory').value;
+    let amt = parseFloat(document.getElementById('expenseAmount').value) || 0;
+    let memo = document.getElementById('expenseMemo').value;
+    if (!d || !cat || !amt) return alert('日付・カテゴリー・金額は必須');
+    let date = new Date(d + 'T12:00:00');
+    let monthKey = getMonthKey(date);
+    initializeMonth(monthKey);
+    data[monthKey].expenses.push({ date: date.toISOString(), category: cat, amount: amt, memo, week: getWeekNumber(date, monthKey) });
+    syncToFirestore();
+    document.getElementById('expenseDate').value = '';
+    document.getElementById('expenseAmount').value = '';
+    document.getElementById('expenseMemo').value = '';
+    renderExpenseCategoryOptions();
+    updateExpenseList();
+    updateDisplay();
+    alert('支出を追加しました');
+}
+function updateExpenseList() {
+    initializeMonth(currentMonth);
+    let arr = [...data[currentMonth].expenses].sort((a, b) => new Date(b.date) - new Date(a.date));
+    let html = arr.map((ex, idx) => {
+        let d = new Date(ex.date);
+        return `<div class="expense-item">
+            <span><strong>${d.getMonth() + 1}/${d.getDate()}</strong> ${ex.category} ¥${ex.amount.toLocaleString()} ${ex.memo ? '<span class="small">- ' + ex.memo + '</span>' : ''}</span>
+            <button class="delete-btn" onclick="deleteExpense(${idx})">削除</button>
+        </div>`;
+    }).join('');
+    document.getElementById('expenseList').innerHTML = html;
+}
+function deleteExpense(idx) {
+    if (confirm('削除しますか？')) {
+        data[currentMonth].expenses.splice(idx, 1);
+        syncToFirestore();
+        updateExpenseList();
+        updateDisplay();
+    }
+}
+
+// ========== 月/週サマリー・進捗・レポート ==========
+function updateDisplay() {
+    initializeMonth(currentMonth);
+    localStorage.setItem(LOCAL_MONTH_KEY, currentMonth);
+    let range = getMonthRange(currentMonth);
+    document.getElementById('currentMonth').textContent =
+        `${range.start.getFullYear()}年${range.start.getMonth() + 1}月${range.start.getDate()}日〜${range.end.getMonth() + 1}月${range.end.getDate()}日`;
+    let incomeSum = data[currentMonth].income.reduce((a, b) => a + b.amount, 0);
+    let budgets = ['fixed', 'saving', 'variable'].flatMap(g => data[currentMonth].budget[g]);
+    let budgetSum = budgets.reduce((a, b) => a + b.amount, 0);
+    let expenseSum = data[currentMonth].expenses.reduce((a, b) => a + b.amount, 0);
+    let remain = incomeSum - expenseSum;
+    document.getElementById('totalIncome').textContent = incomeSum.toLocaleString();
+    document.getElementById('totalBudget').textContent = budgetSum.toLocaleString();
+    document.getElementById('totalExpense').textContent = expenseSum.toLocaleString();
+    document.getElementById('remainingBudget').textContent = remain.toLocaleString();
+    let remCard = document.getElementById('remainingCard');
+    remCard.style.background = remain < 0 ? 'linear-gradient(135deg,#EF4444,#DC2626)' : '#F4F4FC';
+    let tbody = document.getElementById('categorySummary');
+    tbody.innerHTML = '';
+    budgets.forEach(cat => {
+        let catExpSum = data[currentMonth].expenses.filter(e => e.category === cat.name).reduce((a, b) => a + b.amount, 0);
+        let rem = cat.amount - catExpSum;
+        let percent = cat.amount ? catExpSum / cat.amount * 100 : 0;
+        let row = tbody.insertRow();
+        row.innerHTML = `
+          <td>${cat.name}</td>
+          <td>¥${cat.amount.toLocaleString()}</td>
+          <td>¥${catExpSum.toLocaleString()}</td>
+          <td>¥${rem.toLocaleString()}</td>
+          <td><div class="progress-bar"><div class="progress-fill" style="width:${Math.min(percent, 100)}%"></div></div><span class="small">${percent.toFixed(1)}%</span></td>
+        `;
+    });
+    updateAlerts();
+}
+function updateAlerts() {
+    let monthData = data[currentMonth];
+    let alerts = '';
+    let budgets = ['fixed', 'saving', 'variable'].flatMap(g => monthData.budget[g]);
+    budgets.forEach(cat => {
+        let catExp = monthData.expenses.filter(e => e.category === cat.name).reduce((a, b) => a + b.amount, 0);
+        if (catExp > cat.amount) {
+            alerts += `<div class="alert alert-warning">⚠️ ${cat.name}が予算を${(catExp - cat.amount).toLocaleString()}円超過</div>`;
+        }
+    });
+    document.getElementById('alerts').innerHTML = alerts;
+}
+function updateWeeklyReport() {
+    let cats = ['fixed', 'saving', 'variable'].flatMap(g => data[currentMonth].budget[g]).map(c => c.name);
+    let tbody = document.getElementById('weeklyReport'); tbody.innerHTML = '';
+    let wdata = {};
+    cats.forEach(cat => wdata[cat] = { weeks: [0, 0, 0, 0, 0], total: 0 });
+    data[currentMonth].expenses.forEach(ex => {
+        let week = ex.week - 1;
+        if (cats.includes(ex.category)) {
+            wdata[ex.category].weeks[week] += ex.amount;
+            wdata[ex.category].total += ex.amount;
+        }
+    });
+    cats.forEach(cat => {
+        let row = tbody.insertRow();
+        row.innerHTML = `
+            <td>${cat}</td>
+            <td>¥${wdata[cat].weeks[0].toLocaleString()}</td>
+            <td>¥${wdata[cat].weeks[1].toLocaleString()}</td>
+            <td>¥${wdata[cat].weeks[2].toLocaleString()}</td>
+            <td>¥${wdata[cat].weeks[3].toLocaleString()}</td>
+            <td>¥${wdata[cat].weeks[4].toLocaleString()}</td>
+            <td><strong>¥${wdata[cat].total.toLocaleString()}</strong></td>
+        `;
+    });
+    // 週合計行
+    let totalRow = tbody.insertRow();
+    totalRow.className = "week-total-row";
+    let weekTotals = [0,0,0,0,0], grandTotal = 0;
+    cats.forEach(cat => {
+        for (let i = 0; i < 5; i++) weekTotals[i] += wdata[cat].weeks[i];
+        grandTotal += wdata[cat].total;
+    });
+    totalRow.innerHTML = `
+        <td>週合計</td>
+        <td>¥${weekTotals[0].toLocaleString()}</td>
+        <td>¥${weekTotals[1].toLocaleString()}</td>
+        <td>¥${weekTotals[2].toLocaleString()}</td>
+        <td>¥${weekTotals[3].toLocaleString()}</td>
+        <td>¥${weekTotals[4].toLocaleString()}</td>
+        <td>¥${grandTotal.toLocaleString()}</td>
+    `;
+}
+
+// ========== 月切り替え/今月/月初設定 ==========
+function changeMonth(diff) {
+    let [y, m] = currentMonth.split("-").map(Number);
+    let startDay = getMonthStartDay();
+    let newDate = new Date(y, m - 1 + diff, startDay);
+    currentMonth = getMonthKey(newDate);
+    updateDisplay();
+    renderIncomeList();
+    renderBudgetList();
+    renderExpenseCategoryOptions();
+    updateExpenseList();
+    updateWeeklyReport();
+}
+function goToToday() {
+    currentMonth = getMonthKey(new Date());
+    updateDisplay();
+    renderIncomeList();
+    renderBudgetList();
+    renderExpenseCategoryOptions();
+    updateExpenseList();
+    updateWeeklyReport();
+}
+function changeMonthStartDay() {
+    let day = prompt("月の開始日を入力してください（1~28）", getMonthStartDay());
+    day = parseInt(day);
+    if (day >= 1 && day <= 28) {
+        setMonthStartDay(day);
+        // 月初変更で月またぎロジックが変わる
+        currentMonth = getMonthKey(new Date());
+        updateDisplay();
+        renderIncomeList();
+        renderBudgetList();
+        renderExpenseCategoryOptions();
+        updateExpenseList();
+        updateWeeklyReport();
+    } else {
+        alert("1〜28の数字を入力してください。");
+    }
+}
+
+// ========== データ全リセット ==========
+function resetAllData() {
+    if (confirm('全データ削除します。元に戻せません。')) {
+        db.collection("budgets").doc(userUid).delete().then(()=>{
+            data = {};
+            alert("削除しました。再度ログインで初期化されます。");
+            location.reload();
+        });
+    }
+}
+
+// ========== 初期画面状態・自動月遷移 ==========
+window.onload = function() {
+    if (!localStorage.getItem(LOCAL_STARTDAY_KEY)) setMonthStartDay(15);
+};
+
+</script>
+</body>
+</html>
